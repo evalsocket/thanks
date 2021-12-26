@@ -6,6 +6,7 @@ import (
 	"github.com/google/go-github/github"
 )
 
+// A org represents a organisation github object
 type org struct {
 	owner string
 	releaseRepo string
@@ -14,9 +15,11 @@ type org struct {
 	filterStats map[string]contribution
 }
 
+// A contribution represents a contributors list with count
 type contribution struct {
 	contributors map[string]int64
 }
+
 
 type thanks interface {
 	listRepository() ([]*github.Repository, error)
@@ -26,6 +29,7 @@ type thanks interface {
 	Thanks(prerelease bool) (map[string]contribution, error)
 }
 
+// NewClient will create organisation github object and return the thanks interface
 func NewReleaseClient(owner,releaseRepo string) thanks {
 	return org {
 		owner: owner,
@@ -107,6 +111,9 @@ func (o org) filterContributors(currentRelease, oldRelease *github.RepositoryRel
 	return  nil
 }
 
+// Thanks will create the contributor list by release,
+// If prerelease is true then Thanks will filter the prerelease
+// Or else it will consider prerelease tag in list
 func (o org) Thanks(prerelease bool) (map[string]contribution, error) {
 	repositories ,err := o.listRepository()
 	if err != nil {

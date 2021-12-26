@@ -1,0 +1,26 @@
+This is a Go package which create contributors list by release by scanning across all repository that exist in organisation, Only helpful for those organisations that use single repo for release/issue management.
+
+See docs at http://godoc.org/github.com/evalsocket/thanks
+
+Example
+
+```
+package main
+
+import (
+    "github.com/evalsocket/thanks"
+)
+
+func main(){
+    c := thanks.NewClient("flyteorg","flyte)
+    list, err := c.Thanks(true)
+    if err != nil {
+       fmt.Println(err)
+    }
+}
+```
+
+Notes: 
+- Github schedule the data collection for your organisation if that doesn't exist, In that case wait and retry it, 
+- Github also have rate limit so please use ot responsibly
+
