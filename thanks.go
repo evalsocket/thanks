@@ -7,58 +7,74 @@ import (
 )
 
 type org struct {
-	mainRepository string
+	owner string
+	releaseRepo string
 	client *github.Client
 	contributors map[string][]*github.ContributorStats
-	filterStats map[string][]string
+	filterStats map[string]contribution
+}
+
+type contribution struct {
+	contributors map[string]int64
 }
 
 type thanks interface {
-	ListRepository(org string) ([]*github.Repository, error)
-	ListRelease(org string) ([]*github.RepositoryRelease, error)
-	ListContributorsStats(org, repo string) (error)
-	FilterContributors(currentRelease,oldRelease github.RepositoryRelease, repo string) (error)
-	Thanks() map[string][]string
+	listRepository() ([]*github.Repository, error)
+	listRelease(prerelease bool) ([]*github.RepositoryRelease, error)
+	listContributorsStats(repo string) error
+	filterContributors(currentRelease,oldRelease *github.RepositoryRelease, repo string) error
+	Thanks(prerelease bool) (map[string]contribution, error)
 }
 
-func NewReleaseClient(mainRepository string) thanks {
+func NewReleaseClient(owner,releaseRepo string) thanks {
 	return org {
-		mainRepository: mainRepository,
+		owner: owner,
+		releaseRepo: releaseRepo,
 		client: github.NewClient(nil),
 		contributors:  map[string][]*github.ContributorStats{},
-		filterStats: map[string][]string{},
+		filterStats: map[string]contribution{},
 	}
 }
 
-func (o org) ListRepository(org string) ([]*github.Repository, error){
+func (o org) listRepository() ([]*github.Repository, error){
 	opt := &github.RepositoryListByOrgOptions{Type: "public"}
-	repos, _, err := o.client.Repositories.ListByOrg(context.Background(), org, opt)
+	repos, _, err := o.client.Repositories.ListByOrg(context.Background(), o.owner, opt)
 	if err != nil {
 		if _, ok := err.(*github.RateLimitError); ok {
-			return []*github.Repository{}, errors.New("hit rate limit")
+			return []*github.Repository{}, errors.New("please try again, You hit github rate limit")
 		}
 		return []*github.Repository{}, err
 	}
 	return repos, nil
 }
 
-func (o org) ListRelease(org string) ([]*github.RepositoryRelease, error){
-	opt := &github.ListOptions{Page: 1, PerPage: 100}
-	releases,_, err := o.client.Repositories.ListReleases(context.Background(),org, o.mainRepository, opt)
+func (o org) listRelease(prerelease bool) ([]*github.RepositoryRelease, error){
+	opt := &github.ListOptions{Page: 1, PerPage: 200}
+	releases,_, err := o.client.Repositories.ListReleases(context.Background(),o.owner, o.releaseRepo, opt)
 	if err != nil {
 		if _, ok := err.(*github.RateLimitError); ok {
-			return []*github.RepositoryRelease{}, errors.New("hit rate limit")
+			return []*github.RepositoryRelease{}, errors.New("please try again, You hit github rate limit")
 		}
 		return []*github.RepositoryRelease{}, err
 	}
+	if prerelease {
+		filterReleases := []*github.RepositoryRelease{}
+		for _,release := range releases {
+			if !release.GetPrerelease()  {
+				filterReleases = append(filterReleases, release)
+			}
+		}
+		return filterReleases,nil
+	}
+
 	return releases,nil
 }
 
-func (o org) ListContributorsStats(org, repo string) (error){
-	stats, _, err := o.client.Repositories.ListContributorsStats(context.Background(), org, repo)
+func (o org) listContributorsStats(repo string) error{
+	stats, _, err := o.client.Repositories.ListContributorsStats(context.Background(), o.owner, repo)
 	if err != nil {
 		if _, ok := err.(*github.AcceptedError); ok {
-			return errors.New("scheduled")
+			return errors.New("please try in a while, Github scheduled the data collection")
 		}
 		return err
 	}
@@ -69,45 +85,47 @@ func (o org) ListContributorsStats(org, repo string) (error){
 	return nil
 }
 
-func (o org) FilterContributors(currentRelease,oldRelease github.RepositoryRelease, repo string) (error){
+func (o org) filterContributors(currentRelease, oldRelease *github.RepositoryRelease, repo string) error {
+	var total int64 = 0
 	for _,stat := range o.contributors[repo] {
 		for _,s := range stat.Weeks {
 			if currentRelease.CreatedAt.After(s.Week.Time) && oldRelease.CreatedAt.Before(s.Week.Time) {
 				if _, ok := o.filterStats[currentRelease.GetTagName()]; !ok {
-					o.filterStats[currentRelease.GetTagName()] = []string{}
+					o.filterStats[currentRelease.GetTagName()] = contribution{
+						contributors: map[string]int64{},
+					}
 				}
-				o.filterStats[currentRelease.GetTagName()] = append(o.filterStats[currentRelease.GetTagName()], *stat.GetAuthor().Login)
+				if _, ok := o.filterStats[currentRelease.GetTagName()].contributors[stat.GetAuthor().GetLogin()]; !ok {
+					o.filterStats[currentRelease.GetTagName()].contributors[stat.GetAuthor().GetLogin()] = 0
+				}
+				total++
+				o.filterStats[currentRelease.GetTagName()].contributors[stat.GetAuthor().GetLogin()] = o.filterStats[currentRelease.GetTagName()].contributors[stat.GetAuthor().GetLogin()] + 1
+
 			}
 		}
 	}
 	return  nil
 }
 
-
-func (o org) Thanks() map[string][]string {
-	for release,actors := range o.filterStats {
-		o.filterStats[release] = removeDuplicates(actors)
+func (o org) Thanks(prerelease bool) (map[string]contribution, error) {
+	repositories ,err := o.listRepository()
+	if err != nil {
+		return o.filterStats,err
 	}
-	return o.filterStats
-}
+	releases ,err := o.listRelease(prerelease)
+	if err != nil {
+		return o.filterStats,err
+	}
 
-
-func contains(s []string, e string) bool {
-	for _, a := range s {
-		if a == e {
-			return true
+	for _, repository := range repositories {
+		if err := o.listContributorsStats(repository.GetName()); err != nil {
+			return o.filterStats,err
+		}
+		for i := 0; i < len(releases)-1; i++ {
+			if err := o.filterContributors(releases[i], releases[i+1], repository.GetName()); err != nil {
+				return o.filterStats,err
+			}
 		}
 	}
-	return false
-}
-
-
-func removeDuplicates(strList []string) []string {
-	list := []string{}
-	for _, item := range strList {
-		if contains(list, item) == false {
-			list = append(list, item)
-		}
-	}
-	return list
+	return o.filterStats,nil
 }
