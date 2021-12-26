@@ -13,7 +13,7 @@ type org struct {
 	filterStats map[string][]string
 }
 
-type release interface {
+type thanks interface {
 	ListRepository(org string) ([]*github.Repository, error)
 	ListRelease(org string) ([]*github.RepositoryRelease, error)
 	ListContributorsStats(org, repo string) (error)
@@ -21,7 +21,7 @@ type release interface {
 	Thanks() map[string][]string
 }
 
-func NewReleaseClient(mainRepository string) release {
+func NewReleaseClient(mainRepository string) thanks {
 	return org {
 		mainRepository: mainRepository,
 		client: github.NewClient(nil),
